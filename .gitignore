@@ -1,0 +1,15 @@
+# ignorar node_modules
+node_modules
+
+Consultas/*
+!Consultas/.gitkeep
+
+TaskBoardTracker/*
+!TaskBoardTracker/.gitkeep
+
+.env
+
+pnpm-lock.yaml
+
+prueba.js
+notas.md
