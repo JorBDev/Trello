@@ -13,3 +13,5 @@ pnpm-lock.yaml
 
 prueba.js
 notas.md
+Excel/*
+!Excel/.gitkeep

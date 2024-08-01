@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 import fs from "fs";
 import { dashcards } from "./TaskBoardTracker.js";
+import readline from "readline";
+import { convertirJsonACsv } from "./excel.js";
 dotenv.config();
 
 const apiKey = process.env.API_KEY;
@@ -48,7 +50,8 @@ export async function fetchBoardsOfOrganization() {
     console.log("Boards obtenidos correctamente ✅");
     return dataFormatted;
   } catch (err) {
-    console.log(err);
+    console.log("Error al obtener los datos de los boards ❌");
+    return [];
     throw new Error("Error al obtener los datos de los boards ❌");
   }
 }
@@ -115,7 +118,8 @@ export async function fetchCardsOfBoardWithDateCreate(idBoard, list) {
     console.log("Cards obtenidos correctamente ✅");
     return dataFormatted;
   } catch (err) {
-    console.log(err);
+    console.log("Error al obtener los datos de los cards ❌");
+    return [];
     throw new Error("Error al obtener los datos de los cards ❌");
   }
 }
@@ -176,7 +180,8 @@ export async function fetchCardsOfBoard(idBoard, list) {
     console.log("Cards obtenidos correctamente ✅");
     return dataFormatted;
   } catch (err) {
-    console.log(err);
+    console.log("Error al obtener los datos de los cards ❌");
+    return [];
     throw new Error("Error al obtener los datos de los cards ❌");
   }
 }
@@ -212,9 +217,9 @@ export async function fetchActionsOfCard(idCard) {
     // console.log(JSON.stringify(dataFormatted, null, 2));
     return dataFormatted;
   } catch (err) {
-    console.log(err);
-    throw new Error("Error al obtener los datos de los actions ❌");
+    console.log("Error al obtener los datos de los actions ❌");
     return {};
+    throw new Error("Error al obtener los datos de los actions ❌");
   }
 }
 
@@ -283,7 +288,8 @@ export async function fetchCardCreationDate(idCard) {
     console.log("Fecha de creacion de la card obtenida correctamente ✅");
     return firstAction.date;
   } catch (err) {
-    console.log(err);
+    console.log("Error al obtener la fecha de creacion de la card ❌");
+    return "";
     throw new Error("Error al obtener la fecha de creacion de la card ❌");
   }
 }
@@ -314,7 +320,8 @@ export async function fetchListCustomField(idBoard) {
 
     return customField;
   } catch (err) {
-    console.log(err);
+    console.log("Error al obtener la fecha de creacion de la card ❌");
+    return [];
     throw new Error("Error al obtener la fecha de creacion de la card ❌");
   }
 }
@@ -345,9 +352,9 @@ export async function fetchCustomFieldItems(idCard) {
 
     return customFieldItems;
   } catch (err) {
-    console.log(err);
-    throw new Error("Error al obtener el fiel items de la card ❌");
+    console.log("Error al obtener el fiel items de la card ❌");
     return [];
+    throw new Error("Error al obtener el fiel items de la card ❌");
   }
 }
 
@@ -486,13 +493,13 @@ export async function getDateTaskBoardTracker(listBoards) {
     ]
   */
 
-  for (let i = 5; i < dashcards.length; i++) {
+  for (let i = 0; i < dashcards.length; i++) {
     const { name, boards, list, status, completed } = dashcards[i];
 
     const nameFormatted = name.trim().replace(/\s/g, "_"); // remplazar los espacios por guiones bajos y si tiene espacios al inicio o final quitarlos
     const cardsDashCards = [];
 
-    console.log("---------------- |", name, "| ----------------");
+    // console.log("---------------- |", name, "| ----------------");
     for (let j = 0; j < boards.length; j++) {
       const boardName = boards[j]; // boards es un array de strings con los nombres de los boards
 
@@ -507,7 +514,7 @@ export async function getDateTaskBoardTracker(listBoards) {
         continue;
       }
 
-      console.log("Board: ", board.id, "->", board.name);
+      // console.log("Board: ", board.id, "->", board.name);
       // Obtenemos las cards del board
       let cardsAux = [];
       try {
@@ -547,7 +554,11 @@ export async function getDateTaskBoardTracker(listBoards) {
       }
 
       const cards = [];
+      // let index = 0;
+      // const interval = 10000;
+      // const requestsPerInterval = 100;
 
+      // for (let k = 0; k < requestsPerInterval && index < cardsAux.length; k++) {
       for (let k = 0; k < cardsAux.length; k++) {
         const card = cardsAux[k];
         card.board = board.name;
@@ -555,17 +566,24 @@ export async function getDateTaskBoardTracker(listBoards) {
         // Validamos si la card esta en la list (categorias)
         if (!list.includes(card.categoria)) continue;
 
-        // si status y completed estan vacios guardamos la card
+        // Obtenemos el customfielitems de la card y la fecha de creacion
+        // const customFieldItems = await fetchCustomFieldItems(card.id);
+        // const dateCard = await fetchCardCreationDate(card.id);
+        const [customFieldItems, dateCard] = await Promise.all([
+          fetchCustomFieldItems(card.id),
+          fetchCardCreationDate(card.id),
+        ]);
+
+        if (!isEmpty(dateCard)) card.dateCreate = dateCard;
+
         if (!status && !completed) {
+          // si status y completed estan vacios guardamos la card
           cards.push(card);
           continue;
         }
 
-        // Obtenemos el customfielitems de la card
-        const customFieldItems = await fetchCustomFieldItems(card.id);
-
         // Validamos el status de la card y lo guardamos
-        if (!isEmpty(statusField) && status) {
+        if (!isEmpty(statusField) && status && !isEmpty(customFieldItems)) {
           // 1. obtenemos del customFieldItems el status con el id del statusField
           const statusCustomFieldItem = customFieldItems.find((item) => {
             if (item.idCustomField === statusField.id) {
@@ -573,25 +591,47 @@ export async function getDateTaskBoardTracker(listBoards) {
             }
           });
           if (isEmpty(statusCustomFieldItem)) {
-            console.log(
-              `No se encontro el status de la card ${JSON.stringify(
-                card,
-                null,
-                2
-              )} ❌`
-            );
+            console.log(`No se encontro el status de la card❌`);
+            // console.log(
+            //   `No se encontro el status de la card ${JSON.stringify(
+            //     card,
+            //     null,
+            //     2
+            //   )} ❌`
+            // );
             continue;
           }
 
           // 2. obtenemos el valor del status
           // console.log("card: " + JSON.stringify(card, null, 2));
+          // const {
+          //   value: { text },
+          // } = statusField.options.find((option) => {
+          //   if (option.id === statusCustomFieldItem.idValue) {
+          //     return option;
+          //   }
+          // });
+          const statusOption = statusField.options.find((option) => {
+            return option.id === statusCustomFieldItem.idValue;
+          });
+
+          if (isEmpty(statusOption)) {
+            console.error(
+              `No se encontró una opción con id ${statusCustomFieldItem.idValue}`
+            );
+            continue;
+          }
+
           const {
             value: { text },
-          } = statusField.options.find((option) => {
-            if (option.id === statusCustomFieldItem.idValue) {
-              return option;
-            }
-          });
+          } = statusOption;
+
+          if (isEmpty(text)) {
+            console.error(
+              `No se encontró un texto en la opción con id ${statusCustomFieldItem.idValue}`
+            );
+            continue;
+          }
 
           if (text.trim().toUpperCase() !== status.trim().toUpperCase())
             continue;
@@ -602,11 +642,33 @@ export async function getDateTaskBoardTracker(listBoards) {
         // Validamos el completed de la card y lo guardamos
         if (!isEmpty(completedField) && completed) {
           // del completedField usamos el id para encontrar el completed en customFieldItems y obtener la fecha
-          const {
-            value: { date },
-          } = customFieldItems.find(
+          // const {
+          //   value: { date },
+          // } = customFieldItems.find(
+          //   (item) => item.idCustomField === completedField.id
+          // );
+          // Obtener el custom field item correspondiente
+          const customFieldItem = customFieldItems.find(
             (item) => item.idCustomField === completedField.id
           );
+
+          if (isEmpty(customFieldItem)) {
+            console.error(
+              `No se encontró un custom field item con id ${completedField.id}`
+            );
+            continue;
+          }
+
+          const {
+            value: { date },
+          } = customFieldItem;
+
+          if (!date) {
+            console.error(
+              `El custom field item con id ${completedField.id} no tiene una fecha válida`
+            );
+            continue;
+          }
 
           // console.log("Completed: ", date); // fecha en formato ISO 8601: 2021-09-30T00:00:00.000Z
           const dateCompleted = new Date(date);
@@ -631,7 +693,7 @@ export async function getDateTaskBoardTracker(listBoards) {
 
         cards.push(card);
       }
-      console.log("Total de cards: ", cards.length);
+      console.log("Total de cards: ", cardsDashCards.length);
       cardsDashCards.push(...cards);
     }
     // guardar los datos en un archivo
@@ -640,14 +702,9 @@ export async function getDateTaskBoardTracker(listBoards) {
       `${nameFormatted}.json`,
       "TaskBoardTracker"
     );
-    return;
+    // return;
   }
 }
-
-const rawData = fs.readFileSync("Consultas/boards.json", "utf8");
-const listBoards = JSON.parse(rawData);
-getDateTaskBoardTracker(listBoards);
-
 async function main() {
   let listBoards = await fetchBoardsOfOrganization(); // Obtenemos todos los boards de la organizacion
   const boardsUsadas = boardsUnicos(); // Obtenemos los boards que se usan en el "Task Board Tracker"
@@ -667,6 +724,27 @@ async function main() {
       fetchListCustomFieldMoreSave(board.id), // Obtenemos los custom fields del board y los guardamos en un archivo customFields_idBoard.json
     ]);
   }
+
+  getDateTaskBoardTracker(listBoards);
 }
 
-// main();
+// interfaz de readline
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+rl.question(
+  "¿Ya tienes todos los datos de los boards, listas, cards y custom fields? (s/n) ",
+  async (answer) => {
+    if (answer === "s") {
+      const rawData = fs.readFileSync("Consultas/boards.json", "utf8");
+      const listBoards = JSON.parse(rawData);
+      await getDateTaskBoardTracker(listBoards);
+    } else {
+      await main();
+    }
+    convertirJsonACsv();
+    rl.close();
+  }
+);
