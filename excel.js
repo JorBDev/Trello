@@ -36,6 +36,9 @@ const fields = [
   //   "idList",
   //   "url",
   "shortUrl",
+  "status",
+  "completed",
+  "completedDate",
 ];
 const opts = { fields, delimiter: ";" };
 
@@ -65,7 +68,7 @@ export function convertirJsonACsv() {
           const dataFormatted = jsonData.map((item) => {
             return {
               name: item.name,
-              board: item.board,
+              board: item.boardName,
               categoria: item.categoria,
               dateCreate: item.dateCreate,
               dateLastActivity: item.dateLastActivity,
@@ -76,6 +79,9 @@ export function convertirJsonACsv() {
               // idList: item.idList,
               // url: item.url,
               shortUrl: item.shortUrl,
+              status: item.status,
+              completed: item.completed,
+              completedDate: item.completedDate,
             };
           });
 

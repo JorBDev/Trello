@@ -1,381 +1,277 @@
 import dotenv from "dotenv";
+import axios from "axios";
 import fs from "fs";
-import { dashcards } from "./TaskBoardTracker.js";
 import readline from "readline";
+import { dashcards } from "./TaskBoardTracker.js";
+import { dashcards as dashcardsPs } from "./TaskBoardPS.js";
 import { convertirJsonACsv } from "./excel.js";
+
 dotenv.config();
-
+/**
+ Hay un límite de 300 solicitudes cada 10 segundos para cada clave API y no más de 100 solicitudes por intervalo de 10 segundos para cada token. Si una solicitud excede el límite, Trello devolverá un error 429.
+ */
 const apiKey = process.env.API_KEY;
-const token = process.env.TOKEN;
+const tokens = [process.env.TOKEN, process.env.TOKEN2, process.env.TOKEN3];
+const idOrganizations = process.env.ID_ORGANIZATIONS;
 
-const idOrganizations = "64a86c7ab6a58bf68c0f86d6";
+const delay = 10000; // 10 segundos en milisegundos
+const chunkSize = 50; // Máximo de 100 solicitudes concurrentes, pero como se hacen 2 solicitudes por tarjeta, se reduce a 50
+let tokenIndex = 0; // Límite de solicitudes por intervalo de 10 segundos
 
 /**
- *
+ * Obtiene los boards de la organización
  * @returns {Promise<Array>} Retorna un array con los boards de la organizacion
  */
-export async function fetchBoardsOfOrganization() {
-  const url = `https://api.trello.com/1/organizations/${idOrganizations}/boards?key=${apiKey}&token=${token}`;
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
+export async function getBoardsOfOrganization() {
+  const boards = await axios.get(
+    `https://api.trello.com/1/organizations/${idOrganizations}/boards`,
+    {
+      params: {
+        key: apiKey,
+        token: tokens[tokenIndex],
       },
+    }
+  );
+
+  const dataFormatted = [];
+  boards.data.forEach((board) => {
+    if (board.closed) return; // si esta cerrado no lo guardamos
+
+    dataFormatted.push({
+      id: board.id,
+      name: board.name,
+      desc: board.desc,
+      closed: board.closed,
+      idOrganization: board.idOrganization,
+      url: board.url,
+      shortUrl: board.shortUrl,
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const data = await response.json();
-
-    const dataFormatted = [];
-    data.forEach((board) => {
-      if (board.closed) return; // si esta cerrado no lo guardamos
-
-      dataFormatted.push({
-        id: board.id,
-        name: board.name,
-        desc: board.desc,
-        closed: board.closed,
-        idOrganization: board.idOrganization,
-        url: board.url,
-        shortUrl: board.shortUrl,
-      });
-    });
-
-    // fs.writeFileSync("boards.json", JSON.stringify(dataFormatted, null, 2));
-    // console.log("Data saved to 'boards.json'");
-    console.log("Boards obtenidos correctamente ✅");
-    return dataFormatted;
-  } catch (err) {
-    console.log("Error al obtener los datos de los boards ❌");
-    return [];
-    throw new Error("Error al obtener los datos de los boards ❌");
-  }
-}
-
-/**
- *
- * @param {int} idBoard  id del board
- * @param {Array} list  lista del board
- * @returns {Promise<Array>} Retorna un array con las cards del board con la fecha de creacion
- */
-export async function fetchCardsOfBoardWithDateCreate(idBoard, list) {
-  const url = `https://api.trello.com/1/boards/${idBoard}/cards?key=${apiKey}&token=${token}`;
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const data = await response.json();
-
-    const dataFormatted = [];
-
-    for (let i = 0; i < data.length; i++) {
-      const card = data[i];
-
-      if (card.closed || card.manualCoverAttachment) continue; // si esta cerrado o tiene un attachment manual no lo guardamos (manualCoverAttachment)
-      let categoria = "";
-      list.forEach((l) => {
-        if (l.id === card.idList) {
-          categoria = l.name;
-        }
-      });
-
-      const creationDate = await fetchCardCreationDate(card.id);
-
-      dataFormatted.push({
-        id: card.id,
-        name: card.name,
-        desc: card.desc,
-        dateLastActivity: card.dateLastActivity,
-        creationDate: creationDate,
-        closed: card.closed,
-        manualCoverAttachment: card.manualCoverAttachment,
-        dueComplete: card.dueComplete,
-        idBoard: card.idBoard,
-        idList: card.idList,
-        categoria,
-        url: card.url,
-        shortUrl: card.shortUrl,
-      });
-
-      // esperar 1 segundo para no hacer muchas peticiones seguidas
-      //   await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
-
-    // fs.writeFileSync("cards.json", JSON.stringify(dataFormatted, null, 2));
-    // console.log("Data saved to 'cards.json'");
-    console.log("Cards obtenidos correctamente ✅");
-    return dataFormatted;
-  } catch (err) {
-    console.log("Error al obtener los datos de los cards ❌");
-    return [];
-    throw new Error("Error al obtener los datos de los cards ❌");
-  }
-}
-
-/**
- *
- * @param {int} idBoard  id del board
- * @param {array} list  lista del board
- * @returns {Promise<Array>} Retorna un array con las cards del board
- */
-export async function fetchCardsOfBoard(idBoard, list) {
-  const url = `https://api.trello.com/1/boards/${idBoard}/cards?key=${apiKey}&token=${token}`;
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const data = await response.json();
-
-    const dataFormatted = [];
-
-    for (let i = 0; i < data.length; i++) {
-      const card = data[i];
-
-      if (card.closed || card.manualCoverAttachment) continue; // si esta cerrado o tiene un attachment manual no lo guardamos (manualCoverAttachment)
-      let categoria = "";
-      list.forEach((l) => {
-        if (l.id === card.idList) {
-          categoria = l.name;
-        }
-      });
-
-      dataFormatted.push({
-        id: card.id,
-        name: card.name,
-        desc: card.desc,
-        dateLastActivity: card.dateLastActivity,
-        closed: card.closed,
-        manualCoverAttachment: card.manualCoverAttachment,
-        dueComplete: card.dueComplete,
-        idBoard: card.idBoard,
-        idList: card.idList,
-        categoria,
-        url: card.url,
-        shortUrl: card.shortUrl,
-      });
-    }
-
-    // fs.writeFileSync("cards.json", JSON.stringify(dataFormatted, null, 2));
-    // console.log("Data saved to 'cards.json'");
-    console.log("Cards obtenidos correctamente ✅");
-    return dataFormatted;
-  } catch (err) {
-    console.log("Error al obtener los datos de los cards ❌");
-    return [];
-    throw new Error("Error al obtener los datos de los cards ❌");
-  }
-}
-
-/**
- *
- * @param {int} idCard  id de la card
- * @returns {Promise<Object>} Retorna un objeto con los actions de la card
- */
-export async function fetchActionsOfCard(idCard) {
-  const url = `https://api.trello.com/1/cards/${idCard}/actions?filter=all&key=${apiKey}&token=${token}`; // obtiene todas las acciones
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const result = await response.json();
-
-    const { data } = result[0];
-    const {
-      data: { list },
-    } = result[1];
-
-    const dataFormatted = { ...data, list };
-    console.log("Actions obtenidos correctamente ✅");
-    // console.log(JSON.stringify(dataFormatted, null, 2));
-    return dataFormatted;
-  } catch (err) {
-    console.log("Error al obtener los datos de los actions ❌");
-    return {};
-    throw new Error("Error al obtener los datos de los actions ❌");
-  }
-}
-
-/**
- * Obtiene las listas de un board, las listas son las columnas de un board
- * @param {int} idBoard id del board
- * @returns {Promise<Array>} Retorna un array con las listas del board
- */
-export async function fetchListsOfBoard(idBoard) {
-  const url = `https://api.trello.com/1/boards/${idBoard}/lists?key=${apiKey}&token=${token}`;
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const result = await response.json();
-
-    // fs.writeFileSync("actions.json", JSON.stringify(dataFormatted, null, 2));
-    // console.log("Data saved to 'actions.json'");
-    // console.log(JSON.stringify(result, null, 2));
-    console.log("Listas obtenidas correctamente ✅");
-    return result;
-  } catch (err) {
-    console.log(err);
-    throw new Error("Error al obtener las listas del board ❌");
-  }
-}
-
-/**
- *
- * @param {int} idCard id de la card
- * @returns {Promise<String>} Retorna la fecha de creacion de la card
- */
-export async function fetchCardCreationDate(idCard) {
-  //   const url = `https://api.trello.com/1/cards/${idCard}/actions?filter=emailCard&key=${apiKey}&token=${token}`;
-  const url = `https://api.trello.com/1/cards/${idCard}/actions?filter=all&key=${apiKey}&token=${token}`; // obtiene todas las acciones
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const actions = await response.json();
-
-    if (actions.length === 0) {
-      console.log("No hay acciones ❌");
-      return "";
-    }
-
-    actions.sort((a, b) => new Date(a.date) - new Date(b.date));
-    const firstAction = actions[0];
-
-    console.log("Fecha de creacion de la card obtenida correctamente ✅");
-    return firstAction.date;
-  } catch (err) {
-    console.log("Error al obtener la fecha de creacion de la card ❌");
-    return "";
-    throw new Error("Error al obtener la fecha de creacion de la card ❌");
-  }
-}
-
-/**
- * Obtiene los custom fields de un board, los custom fields son campos personalizados de un board
- * @param {int} idBoard id del board
- * @returns {Promise<Array>} Retorna un array con los custom fields del board
- */
-export async function fetchListCustomField(idBoard) {
-  const url = `https://api.trello.com/1/boards/${idBoard}/customFields?filter=all&key=${apiKey}&token=${token}`; // obtiene todas las acciones
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const customField = await response.json();
-
-    console.log("Custom Field obtenidos correctamente ✅");
-    // console.log(JSON.stringify(customField, null, 2));
-
-    return customField;
-  } catch (err) {
-    console.log("Error al obtener la fecha de creacion de la card ❌");
-    return [];
-    throw new Error("Error al obtener la fecha de creacion de la card ❌");
-  }
-}
-
-/**
- *
- * @param {idCard} idCard id de la card
- * @returns {Promise<Array>} Retorna un array con los custom field items de la card
- */
-export async function fetchCustomFieldItems(idCard) {
-  const url = `https://api.trello.com/1/cards/${idCard}/customFieldItems?key=${apiKey}&token=${token}`;
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ❌`);
-    }
-
-    const customFieldItems = await response.json();
-
-    console.log("Custom Field Items obtenidos correctamente ✅");
-    // console.log(JSON.stringify(customFieldItems, null, 2));
-
-    return customFieldItems;
-  } catch (err) {
-    console.log("Error al obtener el fiel items de la card ❌");
-    return [];
-    throw new Error("Error al obtener el fiel items de la card ❌");
-  }
-}
-
-/**
- * Obtiene los boards unicos que se usan en el "Task Board Tracker"
- * @returns {Array} Retorna un array con los boards unicos que se usan en el "Task Board Tracker"
- */
-export function boardsUnicos() {
-  const allBoardDashCards = [];
-  dashcards.forEach((dashcard) => {
-    allBoardDashCards.push(dashcard.boards);
   });
-  const allBoardsUnicos = allBoardDashCards
-    .flat()
-    .filter((item, index, array) => array.indexOf(item) === index);
 
-  // console.log(allBoardsUnicos, allBoardsUnicos.length);
-  return allBoardsUnicos;
+  return dataFormatted;
 }
 
-export function guardarDatosEnArchivo(
+/**
+ * Obtiene las listas y los campos personalizados de los boards
+ * @param {array} boards Array con los boards de la organización
+ * @returns {Promise<{lists: Object, customFields: Object}>} Retorna un objeto con las listas y los campos personalizados de los boards
+ */
+async function getListAndCustomFieldsForBoards(boards) {
+  const lists = {};
+  const customFields = {};
+
+  tokenIndex = (tokenIndex + 1) % tokens.length;
+  for (let i = 0; i < boards.length; i += chunkSize) {
+    const chunk = boards.slice(i, i + chunkSize);
+    const requests = chunk.map((board) => {
+      const customFieldsRequest = axios.get(
+        `https://api.trello.com/1/boards/${board.id}/customFields`,
+        {
+          params: {
+            filter: "all",
+            key: apiKey,
+            token: tokens[tokenIndex],
+          },
+        }
+      );
+      const listRequest = axios.get(
+        `https://api.trello.com/1/boards/${board.id}/lists`,
+        {
+          params: {
+            key: apiKey,
+            token: tokens[tokenIndex],
+          },
+        }
+      );
+
+      // Cambiar al siguiente token para la siguiente solicitud
+      tokenIndex = (tokenIndex + 1) % tokens.length;
+
+      return Promise.all([customFieldsRequest, listRequest])
+        .then(([customFieldsResponse, listResponse]) => {
+          customFields[board.id] = customFieldsResponse.data;
+          lists[board.id] = listResponse.data;
+        })
+        .catch((error) => {
+          console.error(`Error fetching data for board ${board.id}:`, error);
+        });
+    });
+
+    // Esperar a que todas las solicitudes en el bloque se completen
+    await Promise.all(requests);
+
+    // Esperar 10 segundos antes de continuar con el siguiente bloque si hay más solicitudes
+    if (i + chunkSize < boards.length && tokenIndex === 0) {
+      console.log(
+        "Esperando 10 segundos para no exceder el límite de la API..."
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  return { lists, customFields };
+}
+
+/**
+ * Obtiene las listas y los campos personalizados de los boards y los guarda en un archivo lists.json y customFields.json
+ * @param {Array} boards Array con los boards
+ * @returns {Promise<{lists: Object, customFields: Object}>} Retorna un objeto con las listas y los campos personalizados de los boards
+ */
+async function getListAndCustomFieldsForBoardsAndSave(boards) {
+  const { lists, customFields } = await getListAndCustomFieldsForBoards(boards);
+  guardarDatosEnArchivoJSON(lists, "lists.json");
+  guardarDatosEnArchivoJSON(customFields, "customFields.json");
+  return { lists, customFields };
+}
+
+/**
+ * Obtiene las tarjetas de un board
+ * @param {string} boardId
+ * @returns {Promise<Array>} Retorna un array con las tarjetas del board
+ */
+async function getCardsOfBoard(boardId) {
+  const url = `https://api.trello.com/1/boards/${boardId}/cards`;
+  tokenIndex = (tokenIndex + 1) % tokens.length;
+  if (tokenIndex === 0) {
+    console.log("Esperando 10 segundos para no exceder el límite de la API...");
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  const params = {
+    key: apiKey,
+    token: tokens[tokenIndex],
+  };
+  const cardsResponse = await fetchWithRetry(url, params);
+
+  const dataFormatted = [];
+
+  cardsResponse.data.forEach((card) => {
+    if (card.closed || card.manualCoverAttachment) return; // si esta cerrado o tiene una imagen de portada no lo guardamos
+    // ? card.manualCoverAttachment: Si la tarjeta tiene una imagen de portada, no debería ser considerada en ningun caso?
+    dataFormatted.push({
+      id: card.id,
+      name: card.name,
+      desc: card.desc,
+      dateLastActivity: card.dateLastActivity,
+      closed: card.closed,
+      manualCoverAttachment: card.manualCoverAttachment,
+      dueComplete: card.dueComplete,
+      idBoard: card.idBoard,
+      idList: card.idList,
+      url: card.url,
+      shortUrl: card.shortUrl,
+    });
+  });
+
+  return dataFormatted;
+}
+const retries = 11;
+async function fetchWithRetry(url, params) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await axios.get(url, { params });
+      return response;
+    } catch (error) {
+      if (
+        error.response &&
+        error.response.status === 429 &&
+        attempt < retries
+      ) {
+        console.warn(`Request rate-limited. Retrying attempt ${attempt}...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
+/**
+ * Obtiene las acciones y los campos personalizados de las tarjetas de un board
+ * @param {array} cards Array con las tarjetas de un board
+ * @returns {Promise<Object>} Retorna un objeto con las tarjetas y sus acciones y campos personalizados
+ */
+async function getActionsAndCustomFieldsItemsForCards(cards) {
+  const cardData = {};
+
+  tokenIndex = (tokenIndex + 1) % tokens.length;
+  if (tokenIndex === 0) {
+    console.log("Esperando 10 segundos para no exceder el límite de la API...");
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  for (let i = 0; i < cards.length; i += chunkSize) {
+    const chunk = cards.slice(i, i + chunkSize);
+    const requests = chunk.map((card) => {
+      const actionsRequest = fetchWithRetry(
+        `https://api.trello.com/1/cards/${card.id}/actions`,
+        {
+          filter: "all",
+          key: apiKey,
+          token: tokens[tokenIndex],
+        }
+      );
+
+      const customFieldsRequest = fetchWithRetry(
+        `https://api.trello.com/1/cards/${card.id}/customFieldItems`,
+        {
+          key: apiKey,
+          token: tokens[tokenIndex],
+        }
+      );
+
+      // Cambiar al siguiente token para la siguiente solicitud
+      tokenIndex = (tokenIndex + 1) % tokens.length;
+
+      return Promise.all([actionsRequest, customFieldsRequest])
+        .then(([actionsResponse, customFieldsResponse]) => {
+          cardData[card.id] = {
+            ...card,
+            customFieldItems: customFieldsResponse.data,
+            actions: actionsResponse.data,
+          };
+        })
+        .catch((error) => {
+          console.error(`Error fetching data for card ${card.id}:`, error);
+        });
+    });
+
+    // Esperar a que todas las solicitudes en el bloque se completen
+    await Promise.all(requests);
+
+    // Esperar 10 segundos antes de continuar con el siguiente bloque si hay más solicitudes
+    if (i + chunkSize < cards.length && tokenIndex === 0) {
+      console.log(
+        "Esperando 10 segundos para no exceder el límite de la API..."
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  console.log("Data processed ✅");
+  return cardData;
+}
+
+/**
+ * Obtiene las listas y los campos personalizados de los boards que se usan en el "Task Board Tracker" y los guarda en un archivo .json
+ * @param {Array} cards Array con las tarjetas de un board
+ * @param {String} nombreArchivo Nombre del archivo donde se guardarán los datos
+ * @returns {Promise<Object>} Retorna un objeto con las tarjetas y sus acciones y campos personalizados
+ */
+async function getActionsAndCustomFieldsItemsForCardsAndSave(
+  cards,
+  nombreArchivo
+) {
+  const cardData = await getActionsAndCustomFieldsItemsForCards(cards);
+  guardarDatosEnArchivoJSON(cardData, `${nombreArchivo}.json`);
+  return cardData;
+}
+
+/**
+ * Guarda los datos en un archivo JSON
+ * @param {Object|Array} data Datos a guardar en el archivo, puede ser un objeto o un array
+ * @param {string} nombreArchivo Nombre del archivo
+ * @param {string} carpeta Carpeta donde se guardará el archivo
+ */
+export function guardarDatosEnArchivoJSON(
   data,
   nombreArchivo,
   carpeta = "Consultas"
@@ -391,54 +287,42 @@ export function guardarDatosEnArchivo(
   }
 }
 
-export async function fetchBoardsOfOrganizationMoreSave() {
-  try {
-    const listBoards = await fetchBoardsOfOrganization();
-    guardarDatosEnArchivo(listBoards, "boards.json");
-    return listBoards;
-  } catch (error) {
-    console.log(error);
-  }
+/**
+ * Obtiene los name boards únicos que se usan en el "Task Board Tracker"
+ * @returns {Array} Retorna un array con los name boards únicos que se usan en el "Task Board Tracker"
+ */
+function nameBoardsUnicos() {
+  const allBoards = dashcards
+    .map((dashcard) => dashcard.boards) // Obtenemos los boards de cada dashcard
+    .flat() // Convertimos el array de arrays en un solo array
+    .filter((board, index, array) => array.indexOf(board) === index); // Filtramos los boards para que solo contenga uno de cada uno
+
+  return allBoards;
 }
 
-export async function fetchCardsOfBoardWithDateCreateMoreSave(idBoard, list) {
-  try {
-    const cards = await fetchCardsOfBoardWithDateCreate(idBoard, list);
-    guardarDatosEnArchivo(cards, `${idBoard}.json`);
-    return cards;
-  } catch (error) {
-    console.log(error);
-  }
+/**
+ * Obtiene los boards que se usan en el "Task Board Tracker"
+ * @returns {Promise<Array>} Retorna un array con los boards que se usan en el "Task Board Tracker"
+ */
+async function getBoardsOfTaskBoardTracker() {
+  const boardsOfTaskBoardTracker = nameBoardsUnicos();
+
+  const allBoards = await getBoardsOfOrganization();
+
+  const boards = allBoards.filter((board) =>
+    boardsOfTaskBoardTracker.includes(board.name)
+  );
+  return boards;
 }
 
-export async function fetchCardsOfBoardMoreSave(idBoard, list) {
-  try {
-    const cards = await fetchCardsOfBoard(idBoard, list);
-    guardarDatosEnArchivo(cards, `${idBoard}.json`);
-    return cards;
-  } catch (error) {
-    console.log(error);
-  }
-}
-
-export async function fetchListsOfBoardMoreSave(idBoard) {
-  try {
-    const list = await fetchListsOfBoard(idBoard);
-    guardarDatosEnArchivo(list, `list_${idBoard}.json`);
-    return list;
-  } catch (error) {
-    console.log(error);
-  }
-}
-
-export async function fetchListCustomFieldMoreSave(idBoard) {
-  try {
-    const customFields = await fetchListCustomField(idBoard);
-    guardarDatosEnArchivo(customFields, `customFields_${idBoard}.json`);
-    return customFields;
-  } catch (error) {
-    console.log(error);
-  }
+/**
+ * Obtiene los boards que se usan en el "Task Board Tracker" y los guarda en un archivo boards.json
+ * @returns {Promise<Array>} Retorna un array con los boards que se usan en el "Task Board Tracker"
+ */
+async function getBoardsOfTaskBoardTrackerAndSave() {
+  const boards = await getBoardsOfTaskBoardTracker();
+  guardarDatosEnArchivoJSON(boards, "boards.json");
+  return boards;
 }
 
 /**
@@ -446,286 +330,416 @@ export async function fetchListCustomFieldMoreSave(idBoard) {
  * @param {value} value valor a verificar si esta vacio
  * @returns {boolean} Retorna true si el valor es null, undefined, un arreglo vacio o un objeto vacio, de lo contrario retorna false
  */
-export function isEmpty(value) {
+function isEmpty(value) {
   // Verificar si el valor es null o undefined
   if (value == null) return true;
 
   // Verificar si el valor es un arreglo
   if (Array.isArray(value)) return value.length === 0;
 
-  // Verificar si el valor es un objeto
-  if (typeof value === "object") return Object.keys(value).length === 0;
+  // Verificar si el valor es una cadena vacía
+  if (typeof value === "string") return value.trim().length === 0;
 
-  // Si no es ni arreglo ni objeto, no se considera vacío
+  // Verificar si el valor es un objeto
+  if (typeof value === "object") {
+    // Verificar si el valor es un Map vacío
+    if (value instanceof Map) return value.size === 0;
+
+    // Verificar si el valor es un Set vacío
+    if (value instanceof Set) return value.size === 0;
+
+    // Verificar si el objeto no tiene propiedades
+    return Object.keys(value).length === 0;
+  }
+
+  // Para otros tipos, considerar no vacío
   return false;
 }
 
-export async function getDateTaskBoardTracker(listBoards) {
-  /*
-    [
-      {
-        name: "Call Back",
-        boards: [
-          "CSM Board: Josh",
-          "CSS Board: Adrian",
-          "CSS Board: Alexandra",
-          "CSS Board: Alexis",
-          "CSS Board: Brittney",
-          "CSS Board: Carolyn",
-          "CSS Board: Dane",
-          "CSS Board: David",
-          "CSS Board: Don",
-          "CSS Board: Eric Bluehawk",
-          "CSS Board: Eric Sismaet",
-          "CSS Board: Irma",
-          "CSS Board: Janay",
-          "CSS Board: Jill",
-          "CSS Board: Karel",
-          "CSS Board: Marcella",
-          "CSS Board: Micah",
-          "CSS Board: Michael",
-          "CSS Board: Rich",
-        ],
-        list: ["Done"],
-        status: "Call Back",
-        completed: "this month",
-      },
-    ]
-  */
+// getActionsAndCustomFieldsItemsForCards(cards)
+//   .then((cardData) => {
+//     try {
+//       fs.writeFileSync("prueba.json", JSON.stringify(cardData, null, 2));
+//       console.log(
+//         "Datos de las tarjetas procesados y guardados en prueba.json"
+//       );
+//     } catch (error) {
+//       console.error("Error procesando datos de las tarjetas:", error);
+//     }
+//   })
+//   .catch((error) => {
+//     console.error("Error obteniendo datos de las tarjetas:", error);
+//   });
 
-  for (let i = 0; i < dashcards.length; i++) {
-    const { name, boards, list, status, completed } = dashcards[i];
+async function main() {
+  // Obtenemos todos los boards de la organización
+  const boards = await getBoardsOfTaskBoardTrackerAndSave();
+  // Obtenemos las listas y los campos personalizados de los boards
+  const { lists, customFields } = await getListAndCustomFieldsForBoardsAndSave(
+    boards
+  );
+  // For a boards, para obtener las tarjetas de cada uno. Luego, para cada tarjeta, obtener las acciones y los campos personalizados y guardarlos en un archivo
+  for (let i = 0; i < boards.length; i++) {
+    const { id } = boards[i];
+    const cards = await getCardsOfBoard(id);
+    await getActionsAndCustomFieldsItemsForCardsAndSave(cards, id);
+  }
+
+  extraerCardDeTaskBoardTracker();
+}
+
+/**
+ * Obtiene los boards, las listas y los campos personalizados de los boards de los archivos boards.json, lists.json y customFields.json de la carpeta Consultas
+ * @returns {Promise<{boards: Array, lists: Object, customFields: Object}>} Retorna un objeto con los boards, las listas y los campos personalizados de los boards
+ */
+function getBoardAndCustomFieldsAndLists() {
+  let boards = [];
+  let lists = {};
+  let customFields = {};
+  try {
+    const rawData = fs.readFileSync("Consultas/boards.json", "utf8");
+    boards = JSON.parse(rawData);
+
+    const rawDataLists = fs.readFileSync("Consultas/lists.json", "utf8");
+    lists = JSON.parse(rawDataLists);
+
+    const rawDataCustomFields = fs.readFileSync(
+      "Consultas/customFields.json",
+      "utf8"
+    );
+    customFields = JSON.parse(rawDataCustomFields);
+  } catch (error) {
+    console.error("Error obteniendo los datos:", error);
+  }
+  return { boards, lists, customFields };
+}
+
+function getDataOfActionsOfCard(card) {
+  const result = { dateCreate: "" };
+  if (isEmpty(card)) return result;
+  const { actions } = card;
+  if (isEmpty(actions)) return result;
+
+  // Obtener fecha de creación. En los actions esta el type: "createCard", pero no siempre esta este action, por lo que se obtiene la fecha de la primera acción que se haya realizado en la tarjeta
+  const createCardAction = actions.find(
+    (action) => action.type === "createCard"
+  );
+
+  if (!isEmpty(createCardAction)) {
+    result.dateCreate = createCardAction.date;
+  } else {
+    actions.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const firstAction = actions[0];
+    if (!isEmpty(firstAction)) result.dateCreate = firstAction.date;
+  }
+
+  return result;
+}
+
+function getDataOfCustomFieldsItemsOfCard() {}
+
+function getCategoriaOfCard(card, listBoard) {
+  if (isEmpty(listBoard)) return "";
+  const { name } = listBoard.find((list) => list.id === card.idList);
+
+  return name;
+}
+
+function getStatusAndCompletedOfCustomField(customField) {
+  let statusField = {};
+  let completedField = {};
+  if (isEmpty(customField)) return { statusField, completedField };
+
+  // console.log(`customField: ${JSON.stringify(customField, null, 2)}`);
+
+  let c = 0;
+  for (const customFieldItem of customField) {
+    const { name } = customFieldItem;
+    if (name === "Status") {
+      statusField = customFieldItem;
+      c++;
+      if (c === 2) break;
+    } else if (name === "Completed") {
+      completedField = customFieldItem;
+      c++;
+      if (c === 2) break;
+    } else if (name === "Date Completed") {
+      completedField = customFieldItem;
+      c++;
+      if (c === 2) break;
+    }
+  }
+
+  return { statusField, completedField };
+}
+
+function getStatusOfCard(cardId, status, customFieldItems, statusField) {
+  const statusCard = customFieldItems.find(
+    (item) => item.idCustomField === statusField.id
+  );
+  if (isEmpty(statusCard)) {
+    // console.log(
+    //   `No se encontró el campo personalizado status en la tarjeta ${cardId}`
+    // );
+    return "";
+  }
+
+  const statusOption = statusField.options.find((option) => {
+    return option.id === statusCard.idValue;
+  });
+
+  if (isEmpty(statusOption)) {
+    console.log(
+      `No se encontró la opción del campo personalizado status en la tarjeta ${cardId}`
+    );
+    return "";
+  }
+
+  const statusCardName = statusOption?.value?.text;
+  if (isEmpty(statusCardName)) {
+    console.log(
+      `No se encontró el text de la opción del campo personalizado status en la tarjeta ${cardId}`
+    );
+    return "";
+  }
+
+  if (statusCardName.trim().toUpperCase() !== status.trim().toUpperCase())
+    return "";
+
+  return statusCardName;
+}
+
+function isDateInThisMonth(date) {
+  const now = new Date();
+  const inputDate = new Date(date);
+
+  return (
+    now.getFullYear() === inputDate.getFullYear() &&
+    now.getMonth() === inputDate.getMonth()
+  );
+}
+
+function isDateInThisWeek(date) {
+  const now = new Date();
+  const inputDate = new Date(date);
+
+  // Le quitamos la hora a la fecha actual
+  now.setHours(0, 0, 0, 0);
+
+  // Obtener el primer día de la semana (lunes)
+  const firstDayOfWeek = new Date(
+    now.setDate(now.getDate() - now.getDay() + 1)
+  );
+  // console.log("🚀 ~ isDateInThisWeek ~ firstDayOfWeek:", firstDayOfWeek);
+
+  // Obtener el último día de la semana (domingo)
+  const lastDayOfWeek = new Date(firstDayOfWeek);
+  lastDayOfWeek.setDate(firstDayOfWeek.getDate() + 6);
+  // le ponemos que la hora sea 23:59:59
+  lastDayOfWeek.setHours(23, 59, 59, 999);
+
+  // Verificar si la fecha de entrada está dentro de la semana
+  return inputDate >= firstDayOfWeek && inputDate <= lastDayOfWeek;
+}
+
+function getCompletedOfCard(
+  cardId,
+  completed,
+  customFieldItems,
+  completedField
+) {
+  const result = { completed: "", completedDate: "" };
+
+  const customFieldItem = customFieldItems.find(
+    (item) => item.idCustomField === completedField.id
+  );
+  if (isEmpty(customFieldItem)) {
+    // console.log(
+    //   `No se encontró el campo personalizado completed en la tarjeta ${cardId}`
+    // );
+    return result;
+  }
+  const date = customFieldItem?.value?.date;
+
+  if (isEmpty(date)) {
+    console.log(
+      `No se encontró la fecha del campo personalizado completed en la tarjeta ${cardId}`
+    );
+    return result;
+  }
+
+  if (completed === "this week") {
+    // const oneWeekAgo = new Date(dateNow);
+    // oneWeekAgo.setDate(dateNow.getDate() - 7);
+    // if (dateCompleted < oneWeekAgo) return result;
+    if (!isDateInThisWeek(date)) return result;
+
+    result.completed = completed;
+    result.completedDate = date;
+  } else if (completed === "this month") {
+    // const oneMonthAgo = new Date(dateNow);
+    // oneMonthAgo.setMonth(dateNow.getMonth() - 1);
+    // if (dateCompleted < oneMonthAgo) return result;
+    if (!isDateInThisMonth(date)) return result;
+
+    result.completed = completed;
+    result.completedDate = date;
+  }
+  return result;
+}
+
+function extraerCardDeTaskBoardTracker() {
+  const { boards, lists, customFields } = getBoardAndCustomFieldsAndLists();
+
+  // const empieza = dashcards.length - 1;
+  // for (let i = empieza; i < dashcards.length; i++) {
+  for (const dashcard of dashcards) {
+    // const { name, boards: boardsName, list, status, completed } = dashcards[i];
+    const { name, boards: boardsName, list, status, completed } = dashcard;
 
     const nameFormatted = name.trim().replace(/\s/g, "_"); // remplazar los espacios por guiones bajos y si tiene espacios al inicio o final quitarlos
     const cardsDashCards = [];
+    // console.log(`Procesando la dashcard ${name} ✅`);
 
-    // console.log("---------------- |", name, "| ----------------");
-    for (let j = 0; j < boards.length; j++) {
-      const boardName = boards[j]; // boards es un array de strings con los nombres de los boards
-
-      // Obtenemos el board de la lista de boards
-      const board = listBoards.find(
-        (list) =>
-          list.name.trim().toUpperCase() === boardName.trim().toUpperCase()
-        // list.name.tim().includes(board.name) // usar includes si el nombre del board no es exacto
-      );
-      if (!board || board.length === 0) {
-        console.log(`No se encontro el board ${boardName} ❌`);
+    // console.log(boardsName.length);
+    for (const boardName of boardsName) {
+      const board = boards.find((board) => board.name === boardName);
+      if (isEmpty(board)) {
+        console.log(`No se encontró el board ${boardName} ❌`);
         continue;
       }
 
-      // console.log("Board: ", board.id, "->", board.name);
-      // Obtenemos las cards del board
-      let cardsAux = [];
+      // Obtener las tarjetas del board
+      let cards = {};
       try {
-        const rawCards = fs.readFileSync(`Consultas/${board.id}.json`, "utf8");
-        cardsAux = JSON.parse(rawCards);
+        const rawData = fs.readFileSync(`Consultas/${board.id}.json`, "utf8");
+        cards = JSON.parse(rawData);
       } catch (error) {
-        console.log(`Error al obtener las cards del board ${boardName} ❌`);
+        console.error(
+          `Error obteniendo las tarjetas del board ${boardName}:`,
+          error
+        );
         continue;
       }
 
-      // Obtenemos las listas de custom fields del board
-      let statusField = {};
-      let completedField = {};
-      try {
-        const rawCustomFields = fs.readFileSync(
-          `Consultas/customFields_${board.id}.json`,
-          "utf8"
-        );
-        const customFields = JSON.parse(rawCustomFields);
+      const listBoard = lists[board.id];
+      const customField = customFields[board.id];
+      // console.log("🚀 ~ customField:", customField);
 
-        let c = 0;
-        for (const customField of customFields) {
-          if (customField.name === "Status") {
-            statusField = customField;
-            c++;
-            if (c === 2) break;
-          } else if (customField.name === "Completed") {
-            completedField = customField;
-            c++;
-            if (c === 2) break;
-          }
-        }
-      } catch (error) {
-        console.log(
-          `Error al obtener los custom fields del board ${boardName} ❌`
-        );
-      }
+      // const tamaño = Object.keys(cards).length;
+      // console.log(
+      //   `Procesando el board ${boardName} ✅ con ${tamaño} tarjetas >> id: ${board.id}`
+      // );
 
-      const cards = [];
-      // let index = 0;
-      // const interval = 10000;
-      // const requestsPerInterval = 100;
+      const { statusField, completedField } =
+        getStatusAndCompletedOfCustomField(customField);
 
-      // for (let k = 0; k < requestsPerInterval && index < cardsAux.length; k++) {
-      for (let k = 0; k < cardsAux.length; k++) {
-        const card = cardsAux[k];
-        card.board = board.name;
+      for (const key in cards) {
+        let card = cards[key];
+        card.board = boardName;
+        card.categoria = getCategoriaOfCard(card, listBoard);
+        // console.log(`categoria (${card.categoria})`);
+        card = { ...card, ...getDataOfActionsOfCard(card) };
+        // Formatear la card para obtener solo los datos necesarios
+        const { name, categoria, dateCreate, dateLastActivity, shortUrl } =
+          card;
+        let cardFormatted = {
+          name,
+          boardName,
+          categoria,
+          dateCreate: formatDateToYYYYMMDD(dateCreate),
+          dateLastActivity: formatDateToYYYYMMDD(dateLastActivity),
+          shortUrl,
+        };
 
         // Validamos si la card esta en la list (categorias)
-        if (!list.includes(card.categoria)) continue;
-
-        // Obtenemos el customfielitems de la card y la fecha de creacion
-        // const customFieldItems = await fetchCustomFieldItems(card.id);
-        // const dateCard = await fetchCardCreationDate(card.id);
-        const [customFieldItems, dateCard] = await Promise.all([
-          fetchCustomFieldItems(card.id),
-          fetchCardCreationDate(card.id),
-        ]);
-
-        if (!isEmpty(dateCard)) card.dateCreate = dateCard;
-
-        if (!status && !completed) {
-          // si status y completed estan vacios guardamos la card
-          cards.push(card);
+        if (!list.includes(card.categoria)) {
           continue;
         }
 
-        // Validamos el status de la card y lo guardamos
-        if (!isEmpty(statusField) && status && !isEmpty(customFieldItems)) {
-          // 1. obtenemos del customFieldItems el status con el id del statusField
-          const statusCustomFieldItem = customFieldItems.find((item) => {
-            if (item.idCustomField === statusField.id) {
-              return item;
-            }
-          });
-          if (isEmpty(statusCustomFieldItem)) {
-            console.log(`No se encontro el status de la card❌`);
+        // Si no hay status ni completed en la dashcard, se agrega la card
+        if (!status && !completed) {
+          cardsDashCards.push(cardFormatted);
+          continue;
+        }
+
+        // Validamos si la card tiene customFieldItems para poder validar el status y el completed
+        const { customFieldItems } = card;
+        if (isEmpty(customFieldItems)) {
+          // console.log(
+          //   `No se puede validar el status y el completed en el board ${boardName} porque no se encontraron los customFieldItems de la tarjeta ${card.id} ❌`
+          // );
+          continue;
+        }
+
+        if (status) {
+          if (isEmpty(statusField)) {
             // console.log(
-            //   `No se encontro el status de la card ${JSON.stringify(
-            //     card,
-            //     null,
-            //     2
-            //   )} ❌`
+            //   `No se puede validar el status en el board ${boardName} porque no se encontró el campo personalizado status ❌`
             // );
             continue;
           }
-
-          // 2. obtenemos el valor del status
-          // console.log("card: " + JSON.stringify(card, null, 2));
-          // const {
-          //   value: { text },
-          // } = statusField.options.find((option) => {
-          //   if (option.id === statusCustomFieldItem.idValue) {
-          //     return option;
-          //   }
-          // });
-          const statusOption = statusField.options.find((option) => {
-            return option.id === statusCustomFieldItem.idValue;
-          });
-
-          if (isEmpty(statusOption)) {
-            console.error(
-              `No se encontró una opción con id ${statusCustomFieldItem.idValue}`
-            );
-            continue;
-          }
-
-          const {
-            value: { text },
-          } = statusOption;
-
-          if (isEmpty(text)) {
-            console.error(
-              `No se encontró un texto en la opción con id ${statusCustomFieldItem.idValue}`
-            );
-            continue;
-          }
-
-          if (text.trim().toUpperCase() !== status.trim().toUpperCase())
-            continue;
-
-          card.status = text;
-        }
-
-        // Validamos el completed de la card y lo guardamos
-        if (!isEmpty(completedField) && completed) {
-          // del completedField usamos el id para encontrar el completed en customFieldItems y obtener la fecha
-          // const {
-          //   value: { date },
-          // } = customFieldItems.find(
-          //   (item) => item.idCustomField === completedField.id
-          // );
-          // Obtener el custom field item correspondiente
-          const customFieldItem = customFieldItems.find(
-            (item) => item.idCustomField === completedField.id
+          // Validamos el status de la card y lo guardamos
+          const statusCard = getStatusOfCard(
+            card.id,
+            status,
+            customFieldItems,
+            statusField
           );
+          if (!statusCard) continue;
 
-          if (isEmpty(customFieldItem)) {
-            console.error(
-              `No se encontró un custom field item con id ${completedField.id}`
-            );
-            continue;
-          }
-
-          const {
-            value: { date },
-          } = customFieldItem;
-
-          if (!date) {
-            console.error(
-              `El custom field item con id ${completedField.id} no tiene una fecha válida`
-            );
-            continue;
-          }
-
-          // console.log("Completed: ", date); // fecha en formato ISO 8601: 2021-09-30T00:00:00.000Z
-          const dateCompleted = new Date(date);
-          const dateNow = new Date();
-
-          if (completed === "this week") {
-            const oneWeekAgo = new Date(dateNow);
-            oneWeekAgo.setDate(dateNow.getDate() - 7);
-            if (dateCompleted < oneWeekAgo) continue;
-
-            card.completed = completed;
-            card.completedDate = date;
-          } else if (completed === "this month") {
-            const oneMonthAgo = new Date(dateNow);
-            oneMonthAgo.setMonth(dateNow.getMonth() - 1);
-            if (dateCompleted < oneMonthAgo) continue;
-
-            card.completed = completed;
-            card.completedDate = date;
-          }
+          card.statusName = statusCard;
         }
 
-        cards.push(card);
+        if (completed) {
+          if (isEmpty(completedField)) {
+            // console.log(
+            //   `No se puede validar el completed en el board ${boardName} porque no se encontró el campo personalizado completed ❌`
+            // );
+            continue;
+          }
+          // Validamos el completed de la card y lo guardamos
+          const completedCard = getCompletedOfCard(
+            card.id,
+            completed,
+            customFieldItems,
+            completedField
+          );
+          if (isEmpty(completedCard.completed)) continue;
+
+          card.completedName = completedCard.completed;
+          card.completedDate = completedCard.completedDate;
+        }
+
+        // Formatear la card para obtener solo los datos necesarios
+        const { statusName, completedName, completedDate } = card;
+
+        cardFormatted = {
+          ...cardFormatted,
+          status: statusName,
+          completed: completedName,
+          completedDate: completedDate && formatDateToYYYYMMDD(completedDate),
+        };
+
+        cardsDashCards.push(cardFormatted);
       }
-      console.log("Total de cards: ", cardsDashCards.length);
-      cardsDashCards.push(...cards);
     }
-    // guardar los datos en un archivo
-    guardarDatosEnArchivo(
+    console.log(`El Board ${name} tiene ${cardsDashCards.length} tarjetas`);
+    guardarDatosEnArchivoJSON(
       cardsDashCards,
       `${nameFormatted}.json`,
       "TaskBoardTracker"
     );
-    // return;
   }
 }
-async function main() {
-  let listBoards = await fetchBoardsOfOrganization(); // Obtenemos todos los boards de la organizacion
-  const boardsUsadas = boardsUnicos(); // Obtenemos los boards que se usan en el "Task Board Tracker"
 
-  // Filtramos listBoards para que solo contenga los boards que se usan en el "Task Board Tracker" y los guardamos en un archivo boards.json
-  listBoards = listBoards.filter((board) => boardsUsadas.includes(board.name));
-  guardarDatosEnArchivo(listBoards, "boards.json");
+function formatDateToYYYYMMDD(dateString) {
+  const date = new Date(dateString);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0"); // Los meses van de 0 a 11, así que añadimos 1
+  const day = String(date.getDate()).padStart(2, "0");
 
-  // Iteramos sobre listBoards para obtener ListCards, Cards y ListCustomFields
-
-  for (let i = 0; i < listBoards.length; i++) {
-    const board = listBoards[i];
-
-    const list = await fetchListsOfBoardMoreSave(board.id); // Obtenemos las listas del board y las guardamos en un archivo list_idBoard.json
-    await Promise.all([
-      fetchCardsOfBoardMoreSave(board.id, list), // Obtenemos las cards del board y las guardamos en un archivo idBoard.json
-      fetchListCustomFieldMoreSave(board.id), // Obtenemos los custom fields del board y los guardamos en un archivo customFields_idBoard.json
-    ]);
-  }
-
-  getDateTaskBoardTracker(listBoards);
+  return `${year}-${month}-${day}`;
 }
 
 // interfaz de readline
@@ -735,12 +749,10 @@ const rl = readline.createInterface({
 });
 
 rl.question(
-  "¿Ya tienes todos los datos de los boards, listas, cards y custom fields? (s/n) ",
+  "¿Ya tienes todos los datos de los boards, listas, cards y custom fields? Se encuentran en la carpeta Consultas (s/n) ",
   async (answer) => {
     if (answer === "s") {
-      const rawData = fs.readFileSync("Consultas/boards.json", "utf8");
-      const listBoards = JSON.parse(rawData);
-      await getDateTaskBoardTracker(listBoards);
+      extraerCardDeTaskBoardTracker();
     } else {
       await main();
     }
