@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import fs from "fs";
 import readline from "readline";
-import { dashcards } from "./TaskBoardTracker.js";
+import { dashcards as dashcardsTracker } from "./TaskBoardTracker.js";
 import { dashcards as dashcardsPs } from "./TaskBoardPS.js";
 import { convertirJsonACsv } from "./excel.js";
 
@@ -13,6 +13,7 @@ dotenv.config();
 const apiKey = process.env.API_KEY;
 const tokens = [process.env.TOKEN, process.env.TOKEN2, process.env.TOKEN3];
 const idOrganizations = process.env.ID_ORGANIZATIONS;
+const idOrganizationPs = process.env.ID_ORGANIZATION_PS;
 
 const delay = 10000; // 10 segundos en milisegundos
 const chunkSize = 50; // Máximo de 100 solicitudes concurrentes, pero como se hacen 2 solicitudes por tarjeta, se reduce a 50
@@ -22,9 +23,9 @@ let tokenIndex = 0; // Límite de solicitudes por intervalo de 10 segundos
  * Obtiene los boards de la organización
  * @returns {Promise<Array>} Retorna un array con los boards de la organizacion
  */
-export async function getBoardsOfOrganization() {
+export async function getBoardsOfOrganization(id) {
   const boards = await axios.get(
-    `https://api.trello.com/1/organizations/${idOrganizations}/boards`,
+    `https://api.trello.com/1/organizations/${id}/boards`,
     {
       params: {
         key: apiKey,
@@ -117,10 +118,13 @@ async function getListAndCustomFieldsForBoards(boards) {
  * @param {Array} boards Array con los boards
  * @returns {Promise<{lists: Object, customFields: Object}>} Retorna un objeto con las listas y los campos personalizados de los boards
  */
-async function getListAndCustomFieldsForBoardsAndSave(boards) {
+async function getListAndCustomFieldsForBoardsAndSave(
+  boards,
+  folder = "Consultas"
+) {
   const { lists, customFields } = await getListAndCustomFieldsForBoards(boards);
-  guardarDatosEnArchivoJSON(lists, "lists.json");
-  guardarDatosEnArchivoJSON(customFields, "customFields.json");
+  guardarDatosEnArchivoJSON(lists, "lists.json", folder);
+  guardarDatosEnArchivoJSON(customFields, "customFields.json", folder);
   return { lists, customFields };
 }
 
@@ -258,10 +262,11 @@ async function getActionsAndCustomFieldsItemsForCards(cards) {
  */
 async function getActionsAndCustomFieldsItemsForCardsAndSave(
   cards,
-  nombreArchivo
+  nombreArchivo,
+  folder = "Consultas"
 ) {
   const cardData = await getActionsAndCustomFieldsItemsForCards(cards);
-  guardarDatosEnArchivoJSON(cardData, `${nombreArchivo}.json`);
+  guardarDatosEnArchivoJSON(cardData, `${nombreArchivo}.json`, folder);
   return cardData;
 }
 
@@ -291,7 +296,7 @@ export function guardarDatosEnArchivoJSON(
  * Obtiene los name boards únicos que se usan en el "Task Board Tracker"
  * @returns {Array} Retorna un array con los name boards únicos que se usan en el "Task Board Tracker"
  */
-function nameBoardsUnicos() {
+function nameBoardsUnicos(dashcards) {
   const allBoards = dashcards
     .map((dashcard) => dashcard.boards) // Obtenemos los boards de cada dashcard
     .flat() // Convertimos el array de arrays en un solo array
@@ -304,10 +309,10 @@ function nameBoardsUnicos() {
  * Obtiene los boards que se usan en el "Task Board Tracker"
  * @returns {Promise<Array>} Retorna un array con los boards que se usan en el "Task Board Tracker"
  */
-async function getBoardsOfTaskBoardTracker() {
-  const boardsOfTaskBoardTracker = nameBoardsUnicos();
+async function getBoardsOfTaskBoardTracker(id, dashcards) {
+  const boardsOfTaskBoardTracker = nameBoardsUnicos(dashcards);
 
-  const allBoards = await getBoardsOfOrganization();
+  const allBoards = await getBoardsOfOrganization(id);
 
   const boards = allBoards.filter((board) =>
     boardsOfTaskBoardTracker.includes(board.name)
@@ -319,9 +324,13 @@ async function getBoardsOfTaskBoardTracker() {
  * Obtiene los boards que se usan en el "Task Board Tracker" y los guarda en un archivo boards.json
  * @returns {Promise<Array>} Retorna un array con los boards que se usan en el "Task Board Tracker"
  */
-async function getBoardsOfTaskBoardTrackerAndSave() {
-  const boards = await getBoardsOfTaskBoardTracker();
-  guardarDatosEnArchivoJSON(boards, "boards.json");
+async function getBoardsOfTaskBoardTrackerAndSave(
+  id,
+  dashcards,
+  folder = "Consultas"
+) {
+  const boards = await getBoardsOfTaskBoardTracker(id, dashcards);
+  guardarDatosEnArchivoJSON(boards, "boards.json", folder);
   return boards;
 }
 
@@ -371,40 +380,54 @@ function isEmpty(value) {
 //     console.error("Error obteniendo datos de las tarjetas:", error);
 //   });
 
-async function main() {
+async function main(isTaskBoardTracker = true) {
+  const id = isTaskBoardTracker ? idOrganizations : idOrganizationPs;
+  const dashcards = isTaskBoardTracker ? dashcardsTracker : dashcardsPs;
+  const folder = isTaskBoardTracker ? "Consultas" : "ConsultasPS";
   // Obtenemos todos los boards de la organización
-  const boards = await getBoardsOfTaskBoardTrackerAndSave();
+  const boards = await getBoardsOfTaskBoardTrackerAndSave(
+    id,
+    dashcards,
+    folder
+  );
   // Obtenemos las listas y los campos personalizados de los boards
   const { lists, customFields } = await getListAndCustomFieldsForBoardsAndSave(
-    boards
+    boards,
+    folder
   );
   // For a boards, para obtener las tarjetas de cada uno. Luego, para cada tarjeta, obtener las acciones y los campos personalizados y guardarlos en un archivo
   for (let i = 0; i < boards.length; i++) {
     const { id } = boards[i];
     const cards = await getCardsOfBoard(id);
-    await getActionsAndCustomFieldsItemsForCardsAndSave(cards, id);
+    await getActionsAndCustomFieldsItemsForCardsAndSave(cards, id, folder);
   }
-
-  extraerCardDeTaskBoardTracker();
+  if (isTaskBoardTracker) {
+    extraerCardDeTaskBoardTracker(dashcards);
+    convertirJsonACsv("TaskBoardTracker");
+  } else {
+    extraerCardDeTaskBoardPS(dashcards);
+    convertirJsonACsv("TaskBoardPS");
+  }
 }
 
 /**
  * Obtiene los boards, las listas y los campos personalizados de los boards de los archivos boards.json, lists.json y customFields.json de la carpeta Consultas
  * @returns {Promise<{boards: Array, lists: Object, customFields: Object}>} Retorna un objeto con los boards, las listas y los campos personalizados de los boards
  */
-function getBoardAndCustomFieldsAndLists() {
+function getBoardAndCustomFieldsAndLists(folder = "Consultas") {
   let boards = [];
   let lists = {};
   let customFields = {};
+
   try {
-    const rawData = fs.readFileSync("Consultas/boards.json", "utf8");
+    const rawData = fs.readFileSync(`${folder}/boards.json`, "utf8");
     boards = JSON.parse(rawData);
 
-    const rawDataLists = fs.readFileSync("Consultas/lists.json", "utf8");
+    const rawDataLists = fs.readFileSync(`${folder}/lists.json`, "utf8");
     lists = JSON.parse(rawDataLists);
 
     const rawDataCustomFields = fs.readFileSync(
-      "Consultas/customFields.json",
+      `${folder}/customFields.json`,
       "utf8"
     );
     customFields = JSON.parse(rawDataCustomFields);
@@ -473,24 +496,42 @@ function getStatusAndCompletedOfCustomField(customField) {
   return { statusField, completedField };
 }
 
-function getStatusOfCard(cardId, status, customFieldItems, statusField) {
+function getTypeOfRequestOfCustomField(customField) {
+  // !! Usar en TaskBoardPS
+  let typeOfRequest = {};
+  if (isEmpty(customField)) return typeOfRequest;
+
+  // console.log(`customField: ${JSON.stringify(customField, null, 2)}`);
+
+  for (const customFieldItem of customField) {
+    const { name } = customFieldItem;
+    if (name === "Type of Request") {
+      typeOfRequest = customFieldItem;
+      break;
+    }
+  }
+
+  return typeOfRequest;
+}
+
+function getOptionOfCard(cardId, option, customFieldItems, optionField) {
   const statusCard = customFieldItems.find(
-    (item) => item.idCustomField === statusField.id
+    (item) => item.idCustomField === optionField.id
   );
   if (isEmpty(statusCard)) {
     // console.log(
-    //   `No se encontró el campo personalizado status en la tarjeta ${cardId}`
+    //   `No se encontró el campo personalizado en la tarjeta ${cardId}`
     // );
     return "";
   }
 
-  const statusOption = statusField.options.find((option) => {
+  const statusOption = optionField.options.find((option) => {
     return option.id === statusCard.idValue;
   });
 
   if (isEmpty(statusOption)) {
     console.log(
-      `No se encontró la opción del campo personalizado status en la tarjeta ${cardId}`
+      `No se encontró la opción del campo personalizado en la tarjeta ${cardId}`
     );
     return "";
   }
@@ -498,12 +539,12 @@ function getStatusOfCard(cardId, status, customFieldItems, statusField) {
   const statusCardName = statusOption?.value?.text;
   if (isEmpty(statusCardName)) {
     console.log(
-      `No se encontró el text de la opción del campo personalizado status en la tarjeta ${cardId}`
+      `No se encontró el text de la opción del campo personalizado en la tarjeta ${cardId}`
     );
     return "";
   }
 
-  if (statusCardName.trim().toUpperCase() !== status.trim().toUpperCase())
+  if (statusCardName.trim().toUpperCase() !== option.trim().toUpperCase())
     return "";
 
   return statusCardName;
@@ -542,6 +583,28 @@ function isDateInThisWeek(date) {
   return inputDate >= firstDayOfWeek && inputDate <= lastDayOfWeek;
 }
 
+function isDateAfterXDaysAgo(days, date) {
+  const now = new Date();
+  const inputDate = new Date(date);
+
+  // Le quitamos la hora a la fecha actual
+  now.setHours(0, 0, 0, 0);
+
+  // Obtenemos la fecha de hace x días
+  const xDaysAgo = new Date(now);
+  xDaysAgo.setDate(now.getDate() - days);
+
+  return inputDate <= xDaysAgo;
+}
+
+/**
+ * Obtiene el completed de la card según el valor de completed. Si completed es "this week" o "this month", se valida si la fecha de completed de la card está dentro de la semana o el mes actual
+ * @param {*} cardId
+ * @param {*} completed
+ * @param {*} customFieldItems
+ * @param {*} completedField
+ * @returns {Object} Retorna un objeto con el completed y la fecha de completed de la card
+ */
 function getCompletedOfCard(
   cardId,
   completed,
@@ -588,18 +651,49 @@ function getCompletedOfCard(
   return result;
 }
 
-function extraerCardDeTaskBoardTracker() {
-  const { boards, lists, customFields } = getBoardAndCustomFieldsAndLists();
+function validarFechaCardSegunElCreated(cardId, created, dateCreateCard) {
+  if (isEmpty(created)) {
+    console.log(
+      `No se encontró la condición de created en la dashcard de la tarjeta ${cardId}`
+    );
+    return false;
+  }
+
+  if (isEmpty(dateCreateCard)) {
+    console.log(`No se encontró la fecha de creacion de la card: ${cardId}`);
+    return result;
+  }
+
+  //earlier than 2 days ago
+  //earlier than 3 days ago
+  //earlier than 4 days ago
+  //earlier than 5 days ago
+  //earlier than 6 days ago
+  //earlier than 15 days ago
+
+  const validacion = {
+    "earlier than 2 days ago": (fecha) => isDateAfterXDaysAgo(2, fecha),
+    "earlier than 3 days ago": (fecha) => isDateAfterXDaysAgo(3, fecha),
+    "earlier than 4 days ago": (fecha) => isDateAfterXDaysAgo(4, fecha),
+    "earlier than 5 days ago": (fecha) => isDateAfterXDaysAgo(5, fecha),
+    "earlier than 6 days ago": (fecha) => isDateAfterXDaysAgo(6, fecha),
+    "earlier than 15 days ago": (fecha) => isDateAfterXDaysAgo(15, fecha),
+  };
+
+  return validacion[created](dateCreateCard) || false;
+}
+
+function extraerCardDeTaskBoardTracker(dashcards) {
+  const { boards, lists, customFields } =
+    getBoardAndCustomFieldsAndLists("Consultas");
 
   // const empieza = dashcards.length - 1;
   // for (let i = empieza; i < dashcards.length; i++) {
   for (const dashcard of dashcards) {
-    // const { name, boards: boardsName, list, status, completed } = dashcards[i];
     const { name, boards: boardsName, list, status, completed } = dashcard;
 
     const nameFormatted = name.trim().replace(/\s/g, "_"); // remplazar los espacios por guiones bajos y si tiene espacios al inicio o final quitarlos
     const cardsDashCards = [];
-    // console.log(`Procesando la dashcard ${name} ✅`);
 
     // console.log(boardsName.length);
     for (const boardName of boardsName) {
@@ -624,12 +718,6 @@ function extraerCardDeTaskBoardTracker() {
 
       const listBoard = lists[board.id];
       const customField = customFields[board.id];
-      // console.log("🚀 ~ customField:", customField);
-
-      // const tamaño = Object.keys(cards).length;
-      // console.log(
-      //   `Procesando el board ${boardName} ✅ con ${tamaño} tarjetas >> id: ${board.id}`
-      // );
 
       const { statusField, completedField } =
         getStatusAndCompletedOfCustomField(customField);
@@ -680,7 +768,7 @@ function extraerCardDeTaskBoardTracker() {
             continue;
           }
           // Validamos el status de la card y lo guardamos
-          const statusCard = getStatusOfCard(
+          const statusCard = getOptionOfCard(
             card.id,
             status,
             customFieldItems,
@@ -733,6 +821,160 @@ function extraerCardDeTaskBoardTracker() {
   }
 }
 
+function extraerCardDeTaskBoardPS(dashcards) {
+  const folder = "ConsultasPS";
+  const { boards, lists, customFields } =
+    getBoardAndCustomFieldsAndLists(folder);
+  // const empieza = dashcards.length - 1;
+  // for (let i = 1; i < dashcards.length; i++) {
+  for (const dashcard of dashcards) {
+    // const { name, boards: boardsName, list } = dashcards[i];
+    const { name, boards: boardsName } = dashcard;
+    // const typeOfRequest = dashcards[i]?.typeOfRequest;
+    // const created = dashcards[i]?.created;
+    const list = dashcard?.list;
+    const typeOfRequest = dashcard?.typeOfRequest;
+    const created = dashcard?.created;
+    // console.log(`Procesando la dashcard ${name} ✅`);
+    // console.log(`boardsName: ${boardsName}`);
+    // console.log(`list: ${list}`);
+    // console.log(`typeOfRequest: ${typeOfRequest}`);
+    // console.log(`created: ${created}`);
+
+    const nameFormatted = name.trim().replace(/\s/g, "_"); // remplazar los espacios por guiones bajos y si tiene espacios al inicio o final quitarlos
+    const cardsDashCards = [];
+    // console.log(`Procesando la dashcard ${name} ✅`);
+
+    // console.log(boardsName.length);
+    for (const boardName of boardsName) {
+      const board = boards.find((board) => board.name === boardName);
+      if (isEmpty(board)) {
+        console.log(`No se encontró el board ${boardName} ❌`);
+        continue;
+      }
+      // Obtener las tarjetas del board
+      let cards = {};
+      try {
+        const rawData = fs.readFileSync(`${folder}/${board.id}.json`, "utf8");
+        cards = JSON.parse(rawData);
+      } catch (error) {
+        console.error(
+          `Error obteniendo las tarjetas del board ${boardName}:`,
+          error
+        );
+        continue;
+      }
+
+      const listBoard = lists[board.id];
+      const customField = customFields[board.id];
+
+      // const { statusField, completedField } =
+      //   getStatusAndCompletedOfCustomField(customField);
+
+      const typeOfRequestField = getTypeOfRequestOfCustomField(customField);
+
+      for (const key in cards) {
+        let card = cards[key];
+        card.board = boardName;
+        card.categoria = getCategoriaOfCard(card, listBoard);
+        // console.log(`categoria (${card.categoria})`);
+        card = { ...card, ...getDataOfActionsOfCard(card) };
+        // Formatear la card para obtener solo los datos necesarios
+        const { name, categoria, dateCreate, dateLastActivity, shortUrl } =
+          card;
+        let cardFormatted = {
+          name,
+          boardName,
+          categoria,
+          dateCreate: formatDateToYYYYMMDD(dateCreate),
+          dateLastActivity: formatDateToYYYYMMDD(dateLastActivity),
+          shortUrl,
+        };
+
+        // Validamos si la card esta en la list (categorias)
+        if (list) {
+          if (!list.includes(card.categoria)) {
+            continue;
+          }
+        } else {
+          const listNot = dashcard?.listNot;
+          if (listNot) {
+            if (listNot.includes(card.categoria)) {
+              // Si la categoria esta en la lista de listNot, no se agrega la card
+              continue;
+            }
+          }
+        }
+
+        // Si no hay typeOfRequest ni created en la dashcard, se agrega la card
+        if (!typeOfRequest && !created) {
+          cardsDashCards.push(cardFormatted);
+          continue;
+        }
+        // Validamos si la card tiene customFieldItems para poder validar el status y el completed
+        const { customFieldItems } = card;
+        if (isEmpty(customFieldItems)) {
+          // console.log(
+          //   `No se puede validar el status y el completed en el board ${boardName} porque no se encontraron los customFieldItems de la tarjeta ${card.id} ❌`
+          // );
+          continue;
+        }
+
+        if (typeOfRequest) {
+          if (isEmpty(typeOfRequestField)) {
+            // console.log(
+            //   `No se puede validar el status en el board ${boardName} porque no se encontró el campo personalizado status ❌`
+            // );
+            continue;
+          }
+          // Validamos el status de la card y lo guardamos
+          const typeOfRequestCard = getOptionOfCard(
+            card.id,
+            typeOfRequest,
+            customFieldItems,
+            typeOfRequestField
+          );
+          if (!typeOfRequestCard) continue;
+
+          card.statusName = typeOfRequestCard;
+        }
+
+        if (created) {
+          if (isEmpty(dateCreate)) {
+            // console.log(
+            //   `No se puede validar el completed en el board ${boardName} porque no se encontró el campo personalizado completed ❌`
+            // );
+            continue;
+          }
+          // Validamos el si la fecha de creación de la card cumple con la condición
+          const isValid = validarFechaCardSegunElCreated(
+            card.id,
+            created,
+            dateCreate
+          );
+          if (!isValid) continue;
+        }
+
+        // Formatear la card para obtener solo los datos necesarios
+        const { statusName } = card;
+
+        cardFormatted = {
+          ...cardFormatted,
+          status: statusName,
+        };
+
+        cardsDashCards.push(cardFormatted);
+      }
+    }
+    console.log(`El Board ${name} tiene ${cardsDashCards.length} tarjetas`);
+    guardarDatosEnArchivoJSON(
+      cardsDashCards,
+      `${nameFormatted}.json`,
+      "TaskBoardPS"
+    );
+  }
+}
+
 function formatDateToYYYYMMDD(dateString) {
   const date = new Date(dateString);
   const year = date.getFullYear();
@@ -749,14 +991,15 @@ const rl = readline.createInterface({
 });
 
 rl.question(
-  "¿Ya tienes todos los datos de los boards, listas, cards y custom fields? Se encuentran en la carpeta Consultas (s/n) ",
+  "1.TaskBoardTracker\n2.TaskBoardPS\nSeleccione una opción: ",
   async (answer) => {
-    if (answer === "s") {
-      extraerCardDeTaskBoardTracker();
-    } else {
+    if (answer === "1") {
       await main();
+      convertirJsonACsv("TaskBoardTracker");
+    } else if (answer === "2") {
+      await main(false);
+      convertirJsonACsv("TaskBoardPS");
     }
-    convertirJsonACsv();
     rl.close();
   }
 );

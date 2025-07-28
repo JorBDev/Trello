@@ -42,10 +42,9 @@ const fields = [
 ];
 const opts = { fields, delimiter: ";" };
 
-const folder = "TaskBoardTracker/";
-
 // Leer todos los archivos de la carpeta
-export function convertirJsonACsv() {
+export function convertirJsonACsv(folder) {
+  folder = `${folder}/`;
   fs.readdir(folder, (err, files) => {
     if (err) {
       return console.error("No se pudo leer la carpeta:", err);
@@ -79,9 +78,9 @@ export function convertirJsonACsv() {
               // idList: item.idList,
               // url: item.url,
               shortUrl: item.shortUrl,
-              status: item.status,
-              completed: item.completed,
-              completedDate: item.completedDate,
+              status: item?.status,
+              completed: item?.completed,
+              completedDate: item?.completedDate,
             };
           });
 
@@ -89,7 +88,8 @@ export function convertirJsonACsv() {
           const csv = parser.parse(dataFormatted);
 
           // Guardar el archivo CSV
-          fs.writeFileSync(`Excel/${boardName}.csv`, csv);
+          const csvFolder = `Excel${folder}`;
+          fs.writeFileSync(`${csvFolder}${boardName}.csv`, csv);
           console.log("Archivo CSV creado exitosamente.");
         } catch (err) {
           console.error("Error al parsear el JSON:", err);
