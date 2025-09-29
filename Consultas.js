@@ -7,17 +7,18 @@ import { dashcards as dashcardsPs } from "./TaskBoardPS.js";
 import { convertirJsonACsv } from "./excel.js";
 
 dotenv.config();
-/**
- Hay un límite de 300 solicitudes cada 10 segundos para cada clave API y no más de 100 solicitudes por intervalo de 10 segundos para cada token. Si una solicitud excede el límite, Trello devolverá un error 429.
- */
+
+// API Configuration
 const apiKey = process.env.API_KEY;
 const tokens = [process.env.TOKEN, process.env.TOKEN2, process.env.TOKEN3];
 const idOrganizations = process.env.ID_ORGANIZATIONS;
 const idOrganizationPs = process.env.ID_ORGANIZATION_PS;
 
-const delay = 10000; // 10 segundos en milisegundos
-const chunkSize = 50; // Máximo de 100 solicitudes concurrentes, pero como se hacen 2 solicitudes por tarjeta, se reduce a 50
-let tokenIndex = 0; // Límite de solicitudes por intervalo de 10 segundos
+// Rate limiting constants
+const API_DELAY_MS = 10000;
+const CHUNK_SIZE = 50;
+const MAX_RETRIES = 11;
+let tokenIndex = 0;
 
 /**
  * Obtiene los boards de la organización
@@ -62,8 +63,8 @@ async function getListAndCustomFieldsForBoards(boards) {
   const customFields = {};
 
   tokenIndex = (tokenIndex + 1) % tokens.length;
-  for (let i = 0; i < boards.length; i += chunkSize) {
-    const chunk = boards.slice(i, i + chunkSize);
+  for (let i = 0; i < boards.length; i += CHUNK_SIZE) {
+    const chunk = boards.slice(i, i + CHUNK_SIZE);
     const requests = chunk.map((board) => {
       const customFieldsRequest = axios.get(
         `https://api.trello.com/1/boards/${board.id}/customFields`,
@@ -101,12 +102,12 @@ async function getListAndCustomFieldsForBoards(boards) {
     // Esperar a que todas las solicitudes en el bloque se completen
     await Promise.all(requests);
 
-    // Esperar 10 segundos antes de continuar con el siguiente bloque si hay más solicitudes
-    if (i + chunkSize < boards.length && tokenIndex === 0) {
+    // Esperar antes de continuar con el siguiente bloque si hay más solicitudes
+    if (i + CHUNK_SIZE < boards.length && tokenIndex === 0) {
       console.log(
-        "Esperando 10 segundos para no exceder el límite de la API..."
+        `Esperando ${API_DELAY_MS / 1000} segundos para no exceder el límite de la API...`
       );
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));
     }
   }
 
@@ -137,8 +138,10 @@ async function getCardsOfBoard(boardId) {
   const url = `https://api.trello.com/1/boards/${boardId}/cards`;
   tokenIndex = (tokenIndex + 1) % tokens.length;
   if (tokenIndex === 0) {
-    console.log("Esperando 10 segundos para no exceder el límite de la API...");
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    console.log(
+      `Esperando ${API_DELAY_MS / 1000} segundos para no exceder el límite de la API...`
+    );
+    await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));
   }
   const params = {
     key: apiKey,
@@ -168,9 +171,8 @@ async function getCardsOfBoard(boardId) {
 
   return dataFormatted;
 }
-const retries = 11;
 async function fetchWithRetry(url, params) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await axios.get(url, { params });
       return response;
@@ -178,7 +180,7 @@ async function fetchWithRetry(url, params) {
       if (
         error.response &&
         error.response.status === 429 &&
-        attempt < retries
+        attempt < MAX_RETRIES
       ) {
         console.warn(`Request rate-limited. Retrying attempt ${attempt}...`);
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -199,11 +201,13 @@ async function getActionsAndCustomFieldsItemsForCards(cards) {
 
   tokenIndex = (tokenIndex + 1) % tokens.length;
   if (tokenIndex === 0) {
-    console.log("Esperando 10 segundos para no exceder el límite de la API...");
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    console.log(
+      `Esperando ${API_DELAY_MS / 1000} segundos para no exceder el límite de la API...`
+    );
+    await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));
   }
-  for (let i = 0; i < cards.length; i += chunkSize) {
-    const chunk = cards.slice(i, i + chunkSize);
+  for (let i = 0; i < cards.length; i += CHUNK_SIZE) {
+    const chunk = cards.slice(i, i + CHUNK_SIZE);
     const requests = chunk.map((card) => {
       const actionsRequest = fetchWithRetry(
         `https://api.trello.com/1/cards/${card.id}/actions`,
@@ -241,12 +245,12 @@ async function getActionsAndCustomFieldsItemsForCards(cards) {
     // Esperar a que todas las solicitudes en el bloque se completen
     await Promise.all(requests);
 
-    // Esperar 10 segundos antes de continuar con el siguiente bloque si hay más solicitudes
-    if (i + chunkSize < cards.length && tokenIndex === 0) {
+    // Esperar antes de continuar con el siguiente bloque si hay más solicitudes
+    if (i + CHUNK_SIZE < cards.length && tokenIndex === 0) {
       console.log(
-        "Esperando 10 segundos para no exceder el límite de la API..."
+        `Esperando ${API_DELAY_MS / 1000} segundos para no exceder el límite de la API...`
       );
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));
     }
   }
 
@@ -364,21 +368,6 @@ function isEmpty(value) {
   // Para otros tipos, considerar no vacío
   return false;
 }
-
-// getActionsAndCustomFieldsItemsForCards(cards)
-//   .then((cardData) => {
-//     try {
-//       fs.writeFileSync("prueba.json", JSON.stringify(cardData, null, 2));
-//       console.log(
-//         "Datos de las tarjetas procesados y guardados en prueba.json"
-//       );
-//     } catch (error) {
-//       console.error("Error procesando datos de las tarjetas:", error);
-//     }
-//   })
-//   .catch((error) => {
-//     console.error("Error obteniendo datos de las tarjetas:", error);
-//   });
 
 async function main(isTaskBoardTracker = true) {
   const id = isTaskBoardTracker ? idOrganizations : idOrganizationPs;
@@ -567,16 +556,12 @@ function isDateInThisWeek(date) {
   // Le quitamos la hora a la fecha actual
   now.setHours(0, 0, 0, 0);
 
-  // Obtener el primer día de la semana (lunes)
   const firstDayOfWeek = new Date(
     now.setDate(now.getDate() - now.getDay() + 1)
   );
-  // console.log("🚀 ~ isDateInThisWeek ~ firstDayOfWeek:", firstDayOfWeek);
 
-  // Obtener el último día de la semana (domingo)
   const lastDayOfWeek = new Date(firstDayOfWeek);
   lastDayOfWeek.setDate(firstDayOfWeek.getDate() + 6);
-  // le ponemos que la hora sea 23:59:59
   lastDayOfWeek.setHours(23, 59, 59, 999);
 
   // Verificar si la fecha de entrada está dentro de la semana
@@ -632,19 +617,11 @@ function getCompletedOfCard(
   }
 
   if (completed === "this week") {
-    // const oneWeekAgo = new Date(dateNow);
-    // oneWeekAgo.setDate(dateNow.getDate() - 7);
-    // if (dateCompleted < oneWeekAgo) return result;
     if (!isDateInThisWeek(date)) return result;
-
     result.completed = completed;
     result.completedDate = date;
   } else if (completed === "this month") {
-    // const oneMonthAgo = new Date(dateNow);
-    // oneMonthAgo.setMonth(dateNow.getMonth() - 1);
-    // if (dateCompleted < oneMonthAgo) return result;
     if (!isDateInThisMonth(date)) return result;
-
     result.completed = completed;
     result.completedDate = date;
   }
@@ -664,13 +641,6 @@ function validarFechaCardSegunElCreated(cardId, created, dateCreateCard) {
     return result;
   }
 
-  //earlier than 2 days ago
-  //earlier than 3 days ago
-  //earlier than 4 days ago
-  //earlier than 5 days ago
-  //earlier than 6 days ago
-  //earlier than 15 days ago
-
   const validacion = {
     "earlier than 2 days ago": (fecha) => isDateAfterXDaysAgo(2, fecha),
     "earlier than 3 days ago": (fecha) => isDateAfterXDaysAgo(3, fecha),
@@ -687,15 +657,12 @@ function extraerCardDeTaskBoardTracker(dashcards) {
   const { boards, lists, customFields } =
     getBoardAndCustomFieldsAndLists("Consultas");
 
-  // const empieza = dashcards.length - 1;
-  // for (let i = empieza; i < dashcards.length; i++) {
   for (const dashcard of dashcards) {
     const { name, boards: boardsName, list, status, completed } = dashcard;
 
-    const nameFormatted = name.trim().replace(/\s/g, "_"); // remplazar los espacios por guiones bajos y si tiene espacios al inicio o final quitarlos
+    const nameFormatted = name.trim().replace(/\s/g, "_");
     const cardsDashCards = [];
 
-    // console.log(boardsName.length);
     for (const boardName of boardsName) {
       const board = boards.find((board) => board.name === boardName);
       if (isEmpty(board)) {
@@ -726,9 +693,7 @@ function extraerCardDeTaskBoardTracker(dashcards) {
         let card = cards[key];
         card.board = boardName;
         card.categoria = getCategoriaOfCard(card, listBoard);
-        // console.log(`categoria (${card.categoria})`);
         card = { ...card, ...getDataOfActionsOfCard(card) };
-        // Formatear la card para obtener solo los datos necesarios
         const { name, categoria, dateCreate, dateLastActivity, shortUrl } =
           card;
         let cardFormatted = {
@@ -825,27 +790,16 @@ function extraerCardDeTaskBoardPS(dashcards) {
   const folder = "ConsultasPS";
   const { boards, lists, customFields } =
     getBoardAndCustomFieldsAndLists(folder);
-  // const empieza = dashcards.length - 1;
-  // for (let i = 1; i < dashcards.length; i++) {
+
   for (const dashcard of dashcards) {
-    // const { name, boards: boardsName, list } = dashcards[i];
     const { name, boards: boardsName } = dashcard;
-    // const typeOfRequest = dashcards[i]?.typeOfRequest;
-    // const created = dashcards[i]?.created;
     const list = dashcard?.list;
     const typeOfRequest = dashcard?.typeOfRequest;
     const created = dashcard?.created;
-    // console.log(`Procesando la dashcard ${name} ✅`);
-    // console.log(`boardsName: ${boardsName}`);
-    // console.log(`list: ${list}`);
-    // console.log(`typeOfRequest: ${typeOfRequest}`);
-    // console.log(`created: ${created}`);
 
-    const nameFormatted = name.trim().replace(/\s/g, "_"); // remplazar los espacios por guiones bajos y si tiene espacios al inicio o final quitarlos
+    const nameFormatted = name.trim().replace(/\s/g, "_");
     const cardsDashCards = [];
-    // console.log(`Procesando la dashcard ${name} ✅`);
 
-    // console.log(boardsName.length);
     for (const boardName of boardsName) {
       const board = boards.find((board) => board.name === boardName);
       if (isEmpty(board)) {
@@ -868,18 +822,13 @@ function extraerCardDeTaskBoardPS(dashcards) {
       const listBoard = lists[board.id];
       const customField = customFields[board.id];
 
-      // const { statusField, completedField } =
-      //   getStatusAndCompletedOfCustomField(customField);
-
       const typeOfRequestField = getTypeOfRequestOfCustomField(customField);
 
       for (const key in cards) {
         let card = cards[key];
         card.board = boardName;
         card.categoria = getCategoriaOfCard(card, listBoard);
-        // console.log(`categoria (${card.categoria})`);
         card = { ...card, ...getDataOfActionsOfCard(card) };
-        // Formatear la card para obtener solo los datos necesarios
         const { name, categoria, dateCreate, dateLastActivity, shortUrl } =
           card;
         let cardFormatted = {

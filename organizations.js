@@ -1,5 +1,3 @@
-// This code sample uses the 'node-fetch' library:
-// https://www.npmjs.com/package/node-fetch
 import fs from "fs";
 import dotenv from "dotenv";
 dotenv.config();
@@ -44,7 +42,7 @@ async function fetchAndSaveData() {
     fs.writeFileSync("boards.json", JSON.stringify(dataFormatted, null, 2));
     console.log("Data saved to 'boards.json'");
   } catch (err) {
-    console.err(err);
+    console.error(err);
   }
 }
 

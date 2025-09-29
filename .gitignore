@@ -4,8 +4,17 @@ node_modules
 Consultas/*
 !Consultas/.gitkeep
 
+ConsultasPS/*
+!ConsultasPS/.gitkeep
+
 TaskBoardTracker/*
 !TaskBoardTracker/.gitkeep
+
+TaskBoardPS/*
+!TaskBoardPS/.gitkeep
+
+ExcelTaskBoardPS/*
+!ExcelTaskBoardPS/.gitkeep
 
 .env
 

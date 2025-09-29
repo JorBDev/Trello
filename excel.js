@@ -1,27 +1,6 @@
 import { Parser } from "json2csv";
 import fs from "fs";
-import path, { delimiter } from "path";
-
-// Configuración del parser
-/**
- *
- * {
-    "id": "",
-    "name": "",
-    "desc": "",
-    "dateLastActivity": "",
-    "closed": ,
-    "manualCoverAttachment": ,
-    "dueComplete": ,
-    "idBoard": "",
-    "idList": "",
-    "categoria": "",
-    "url": "",
-    "shortUrl": "",
-    "board": "",
-    "dateCreate": ""
-  }
- */
+import path from "path";
 
 const fields = [
   "name",
@@ -29,12 +8,6 @@ const fields = [
   "categoria",
   "dateCreate",
   "dateLastActivity",
-  //   "closed",
-  //   "manualCoverAttachment",
-  //   "dueComplete",
-  //   "idBoard",
-  //   "idList",
-  //   "url",
   "shortUrl",
   "status",
   "completed",
@@ -63,26 +36,18 @@ export function convertirJsonACsv(folder) {
         }
         const boardName = filePath.split("\\")[1].split(".")[0];
         try {
-          const jsonData = JSON.parse(data); // sirve
-          const dataFormatted = jsonData.map((item) => {
-            return {
-              name: item.name,
-              board: item.boardName,
-              categoria: item.categoria,
-              dateCreate: item.dateCreate,
-              dateLastActivity: item.dateLastActivity,
-              // closed: item.closed,
-              // manualCoverAttachment: item.manualCoverAttachment,
-              // dueComplete: item.dueComplete,
-              // idBoard: item.idBoard,
-              // idList: item.idList,
-              // url: item.url,
-              shortUrl: item.shortUrl,
-              status: item?.status,
-              completed: item?.completed,
-              completedDate: item?.completedDate,
-            };
-          });
+          const jsonData = JSON.parse(data);
+          const dataFormatted = jsonData.map((item) => ({
+            name: item.name,
+            board: item.boardName,
+            categoria: item.categoria,
+            dateCreate: item.dateCreate,
+            dateLastActivity: item.dateLastActivity,
+            shortUrl: item.shortUrl,
+            status: item?.status,
+            completed: item?.completed,
+            completedDate: item?.completedDate,
+          }));
 
           const parser = new Parser(opts);
           const csv = parser.parse(dataFormatted);
