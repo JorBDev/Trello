@@ -85,8 +85,8 @@ Script automatizado que:
 ### 1. Clonar el repositorio
 
 ```bash
-git clone [https://github.com/tuusuario/trello-automation.git](https://github.com/tuusuario/trello-automation.git)
-cd trello-automation
+git clone [https://github.com/JorBDev/Trello.git](https://github.com/JorBDev/Trello.git)
+cd Trello
 
 ### 2. Instalar dependencias
 
