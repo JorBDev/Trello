@@ -16,6 +16,8 @@ TaskBoardPS/*
 ExcelTaskBoardPS/*
 !ExcelTaskBoardPS/.gitkeep
 
+ExcelTaskBoardTracker/*
+
 .env
 
 pnpm-lock.yaml
